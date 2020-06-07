@@ -1,0 +1,11 @@
+#!/bin/bash
+# Docker Hub post_push hook to tag the image with nginx version as well
+
+set -e
+
+# Nginx Version in Dockerfile
+VERSION=$(grep "^ARG VERSION" $DOCKERFILE_PATH | awk -F "=" '{ print $2 }')
+
+# Tag and push image for nginx version tag
+docker tag $IMAGE_NAME ${DOCKER_REPO}:${VERSION}
+docker push ${DOCKER_REPO}:${VERSION}

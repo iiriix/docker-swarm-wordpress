@@ -1,0 +1,187 @@
+version: "3.7"
+
+services:
+  mysql:
+    image: mariadb:latest
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 10
+        window: 15s
+      labels:
+        - "traefik.enable=false"
+    environment:
+        MYSQL_DATABASE: wordpress
+        MYSQL_USER: wordpress
+        MYSQL_PASSWORD: wordpress
+        MYSQL_ROOT_PASSWORD: wordpressroot
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - nw-backend
+
+  wordpress:
+    image: wordpress:5-php7.4-fpm-alpine
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 5s
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 10
+        window: 15s
+      labels:
+        - "traefik.enable=false"
+    environment:
+        WORDPRESS_DB_HOST: mysql
+        WORDPRESS_DB_USER: wordpress
+        WORDPRESS_DB_PASSWORD: wordpress
+        WORDPRESS_DB_NAME: wordpress
+        WORDPRESS_TABLE_PREFIX: wp_
+        # WORDPRESS_DEBUG: 1
+    depends_on:
+      - mysql
+    volumes:
+      - wp_data:/var/www/html
+      - ./apps/wordpress/php.ini:/usr/local/etc/php/php.ini
+    networks:
+      - nw-backend
+
+  nginx:
+    image: iiriix/nginx-wp:latest
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 5s
+        order: start-first
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 10
+        window: 15s
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=nw-web"
+        - "traefik.http.services.myrouter-01.loadbalancer.server.port=80"
+        ### Middlewares
+        # https-redir
+        - "traefik.http.middlewares.https-redir.redirectscheme.scheme=https"
+        - "traefik.http.middlewares.https-redir.redirectscheme.permanent=true"
+        # www-redir
+        - "traefik.http.middlewares.www-redir.redirectregex.regex=^https://www.(.*)"
+        - "traefik.http.middlewares.www-redir.redirectregex.replacement=https://$${1}"
+        - "traefik.http.middlewares.www-redir.redirectregex.permanent=true"
+        ### Entrypoints
+        # web
+        - "traefik.http.routers.myrouter-01.rule=Host(`example.com`, `www.example.com`)"
+        - "traefik.http.routers.myrouter-01.entrypoints=web"
+        - "traefik.http.routers.myrouter-01.middlewares=https-redir@docker"
+        # websecure
+        - "traefik.http.routers.myrouter-02.rule=Host(`example.com`, `www.example.com`)"
+        - "traefik.http.routers.myrouter-02.entrypoints=websecure"
+        - "traefik.http.routers.myrouter-02.middlewares=www-redir@docker"
+        - "traefik.http.routers.myrouter-02.tls=true"
+        - "traefik.http.routers.myrouter-02.tls.certresolver=myCloudflare"
+        - "traefik.http.routers.myrouter-02.tls.domains[0].main=example.com"
+        - "traefik.http.routers.myrouter-02.tls.domains[0].sans=*.example.com"
+    depends_on:
+      - wordpress
+    volumes:
+      - wp_data:/var/www/html
+    networks:
+      - nw-backend
+      - nw-web
+
+  traefik:
+    image: traefik:2.2
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 5s
+        order: stop-first
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 10
+        window: 15s
+      # ### Traefik Gui. Uncomment to get access on traefik.example.com.
+      # labels:
+        # - "traefik.enable=true"
+        # - "traefik.http.services.traefik-gui.loadbalancer.server.port=8080"
+        # - "traefik.http.routers.traefik-gui.rule=Host(`traefik.example.com`)"
+        # - "traefik.http.routers.traefik-gui.entrypoints=websecure"
+        # - "traefik.http.routers.traefik-gui.service=api@internal"
+        # - "traefik.http.routers.traefik-gui.middlewares=traefik-gui-auth"
+        # - "traefik.http.middlewares.traefik-gui-auth.basicauth.realm=MyPrivateRealm"
+        # - "traefik.http.middlewares.traefik-gui-auth.basicauth.users=admin:$$apr1$$QsWBfEvl$$kY0SCysYUjo4qQSnKGh8s." # user:admin, pass:admin
+      placement:
+        constraints:
+          - node.role == manager
+    command:
+      - "--log=true"
+      - "--log.level=warn" # PANIC, FATAL, ERROR, WARN, INFO, DEBUG
+      # - "--accesslog=true"
+      - "--api.insecure=true"
+      # - "--api.debug=true"
+      - "--providers.docker=true"
+      - "--providers.docker.swarmMode=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.http.tls=true"
+      ## Certificate Resolver: cloudflare, type=dnsChallenge
+      - "--certificatesResolvers.myCloudflare.acme.email=postmaster@example.com"
+      - "--certificatesResolvers.myCloudflare.acme.storage=/data/acme.json"
+      - "--certificatesResolvers.myCloudflare.acme.caServer=https://acme-staging-v02.api.letsencrypt.org/directory" # Staging. Comment this for Production.
+      - "--certificatesResolvers.myCloudflare.acme.dnsChallenge=true"
+      - "--certificatesResolvers.myCloudflare.acme.dnsChallenge.provider=cloudflare"
+      - "--certificatesResolvers.myCloudflare.acme.dnsChallenge.resolvers=1.1.1.1:53,8.8.8.8:53"
+    environment:
+      CF_DNS_API_TOKEN: cloudflare_api_token
+    ports:
+      - published: 80
+        target: 80
+        protocol: tcp
+        mode: host
+      - published: 443
+        target: 443
+        protocol: tcp
+        mode: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt_data:/data
+    networks:
+      - nw-web
+
+volumes:
+  wp_data:
+    driver: local
+    driver_opts:
+       o: bind
+       type: none
+       device: /data/wp_data
+  mysql_data:
+    driver: local
+    driver_opts:
+       o: bind
+       type: none
+       device: /data/mysql_data
+  letsencrypt_data:
+    driver: local
+    driver_opts:
+       o: bind
+       type: none
+       device: /data/letsencrypt_data
+
+networks:
+  nw-web:
+    external: true
+  nw-backend:
+    external: true
