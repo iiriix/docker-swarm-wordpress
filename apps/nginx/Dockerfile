@@ -28,11 +28,12 @@ RUN set -ex && \
     mkdir -p /var/cache/nginx && \
     chown -R nginx.nginx /var/cache/nginx && \
     #
+    # Create default pid dir
+    mkdir -p /var/run/nginx && \
+    #
     # Forward request and error logs to docker log collector
     ln -sf /dev/stdout /var/log/nginx/access.log && \
     ln -sf /dev/stderr /var/log/nginx/error.log
-
-ADD nginx_conf /etc/nginx/
 
 EXPOSE 80
 

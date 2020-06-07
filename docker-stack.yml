@@ -93,6 +93,8 @@ services:
     depends_on:
       - wordpress
     volumes:
+      - ./apps/nginx/nginx_conf/nginx.conf:/etc/nginx/nginx.conf
+      - ./apps/nginx/nginx_conf/conf.d/default.conf:/etc/nginx/conf.d/default.conf
       - wp_data:/var/www/html
     networks:
       - nw-backend
